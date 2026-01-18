@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>One10Plus - AI Perfume Store</title>
+    <script src="https://js.stripe.com/v3/"></script>
+    <style>
+        .shipping-options{display:flex;gap:15px;margin:20px 0;flex-wrap:wrap}
+        .shipping-option{padding:15px;border:2px solid #eee;border-radius:10px;cursor:pointer;transition:all 0.3s}
+        .shipping-option.active{border-color:#ff6b6b;background:#ff6b6b20}
+        .tax-info{background:#e8f5e8;padding:15px;border-radius:10px;margin:15px 0}
+        .admin-panel{display:none;background:white;padding:30px;border-radius:20px;margin:20px 0;box-shadow:0 20px 40px rgba(0,0,0,0.1)}
+        .admin-table{width:100%;border-collapse:collapse;margin-top:20px}
+        .admin-table th,.admin-table td{padding:12px;text-align:left;border-bottom:1px solid #eee}
+        .admin-table th{background:#f8f9fa;font-weight:bold}
+        .status-pending{background:#fff3cd;color:#856404;padding:5px 10px;border-radius:20px}
+        .status-shipped{background:#d4edda;color:#155724;padding:5px 10px;border-radius:20px}
+    </style>
+</head>
+<body>
+    <!-- Admin Login (hidden) -->
+    <div id="adminLogin" class="modal" style="display:none">
+        <div class="modal-content">
+            <h2>Admin Panel</h2>
+            <input type="password" id="adminPass" placeholder="Password: admin123">
+            <button onclick="loginAdmin()">Login</button>
+        </div>
+    </div>
+
+    <!-- Navbar -->
+    <nav class="navbar">
+        <div class="nav-brand">🧬 One10Plus</div>
+        <div class="nav-links">
+            <a href="#home">Home</a>
+            <a href="#shop">Shop</a>
+            <a href="#quiz">Create Your Scent</a>
+            <a href="#" onclick="toggleAdmin()">👨‍💼 Admin</a>
+            <a href="#cart" class="cart-btn">🛒 <span id="cartCount">0</span></a>
+        </div>
+    </nav>
+
+    <!-- Hero + Quiz -->
+    <section class="hero" id="home">
+        <div class="hero-content">
+            <h1>AI Fragrances <span>Tailored to You</span></h1>
+            <button onclick="startQuiz()" class="cta-btn">Start Quiz</button>
+        </div>
+    </section>
+
+    <!-- Quiz Section -->
+    <div id="quizSection" class="quiz-container" style="display:none;">
+        <!-- Perfume AI quiz goes here -->
+        <div class="progress-container"><!-- Progress --></div>
+        <div class="question-container"><!-- Questions --></div>
+        <button class="next-btn" id="nextBtn">Next</button>
+    </div>
+
+    <!-- Products -->
+    <section id="featured" class="products-section" style="display:none;">
+        <h2>Featured Scents</h2>
+        <div class="products-grid" id="featuredProducts"></div>
+    </section>
+
+    <!-- Checkout with Shipping + Taxes -->
+    <div id="checkoutSection" class="checkout-container" style="display:none;">
+        <div class="checkout-form">
+            <h2>Checkout</h2>
+            
+            <!-- Cart Summary -->
+            <div id="cartSummary"></div>
+            
+            <!-- Shipping Options -->
+            <div class="shipping-section">
+                <h3>Shipping</h3>
+                <div class="shipping-options">
+                    <label class="shipping-option" data-rate="5">
+                        <input type="radio" name="shipping" value="standard" checked>
+                        <strong>Standard</strong> – 3–5 days – <span>$5</span>
+                    </label>
+                    <label class="shipping-option" data-rate="15">
+                        <input type="radio" name="shipping" value="express">
+                        <strong>Express</strong> – 1–2 days – <span>$15</span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Taxes (by state) -->
+            <div class="tax-info">
+                <h4>Tax (by state)</h4>
+                <select id="stateTax">
+                    <option value="0.06">Michigan 6%</option>
+                    <option value="0.08">New York 8%</option>
+                    <option value="0.075">California 7.5%</option>
+                </select>
+            </div>
+
+            <!-- Final Total -->
+            <div class="final-total">
+                <div>Products: $<span id="subtotal">0</span></div>
+                <div>Shipping: $<span id="shippingTotal">5</span></div>
+                <div>Tax: $<span id="taxTotal">0</span></div>
+                <hr>
+                <div class="grand-total">Total: $<span id="grandTotal">0</span></div>
+            </div>
+
+            <!-- Stripe Payment -->
+            <div id="payment-element"></div>
+            <button id="submitPayment" class="buy-btn">Pay now with Stripe</button>
+        </div>
+    </div>
+
+    <!-- Admin Dashboard -->
+    <div id="adminPanel" class="admin-panel">
+        <h2>📊 Admin Dashboard</h2>
+        <div class="stats-grid">
+            <div class="stat-card">
+                <h3 id="totalOrders">0</h3>
+                <span>Total Orders</span>
+            </div>
+            <div class="stat-card">
+                <h3 id="totalRevenue">$0</h3>
+                <span>Total Revenue</span>
+            </div>
+            <div class="stat-card">
+                <h3 id="pendingOrders">0</h3>
+                <span>Pending Orders</span>
+            </div>
+        </div>
+        
+        <!-- Orders Table -->
+        <h3>Latest Orders</h3>
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>Order #</th>
+                    <th>Customer</th>
+                    <th>Amount</th>
+                    <th>Status</th>
+                    <th>Date</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="ordersTable"></tbody>
+        </table>
+    </div>
+
+    <script>
+        // Stripe
+        const stripe = Stripe('pk_test_51...'); // put your key here
+        const elements = stripe.elements();
+        const paymentElement = elements.create('payment');
+        paymentElement.mount('#payment-element');
+
+        // Store data
+        const perfumes = [
+            {id:1,name:"Layl Al-Riyadh",price:89,img:"perfume1.jpg",stock:50,rating:4.9},
+            {id:2,name:"Morning Breeze",price:69,img:"perfume2.jpg",stock:30,rating:4.7}
+        ];
+
+        // Cart
+        let cart = JSON.parse(localStorage.getItem('cart')) || [];
+        let orders = JSON.parse(localStorage.getItem('orders')) || [];
+
+        // Calculate totals
+        function calculateTotals() {
+            const subtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+            const shippingRate = parseFloat(
+                document.querySelector('input[name="shipping"]:checked')
+                    .closest('.shipping-option').dataset.rate
+            );
+            const taxRate = parseFloat(document.getElementById('stateTax').value);
+            
+            const shippingTotal = shippingRate;
+            const taxTotal = subtotal * taxRate;
+            const grandTotal = subtotal + shippingTotal + taxTotal;
+            
+            document.getElementById('subtotal').textContent = subtotal.toFixed(2);
+            document.getElementById('shippingTotal').textContent = shippingTotal.toFixed(2);
+            document.getElementById('taxTotal').textContent = taxTotal.toFixed(2);
+            document.getElementById('grandTotal').textContent = grandTotal.toFixed(2);
+            
+            return grandTotal;
+        }
+
+        // Checkout
+        document.getElementById('submitPayment').addEventListener('click', async () => {
+            const total = calculateTotals() * 100; // cents
+            
+            const response = await fetch('/create-payment-intent', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({amount: total})
+            });
+            
+            const {client_secret} = await response.json();
+            const result = await stripe.confirmPayment({
+                elements,
+                confirmParams: { return_url: window.location.href }
+            });
+            
+            if (result.error) {
+                alert(result.error.message);
+            } else {
+                const order = {
+                    id: Date.now(),
+                    items: cart,
+                    subtotal: parseFloat(document.getElementById('subtotal').textContent),
+                    shipping: parseFloat(document.getElementById('shippingTotal').textContent),
+                    tax: parseFloat(document.getElementById('taxTotal').textContent),
+                    total: parseFloat(document.getElementById('grandTotal').textContent),
+                    status: 'pending',
+                    date: new Date().toLocaleString('en-US'),
+                    customer: 'New customer'
+                };
+                orders.unshift(order);
+                localStorage.setItem('orders', JSON.stringify(orders));
+                
+                cart = [];
+                localStorage.removeItem('cart');
+                alert('✅ Order placed! Your order ID: ' + order.id);
+                updateAdminDashboard();
+            }
+        });
+
+        // Admin
+        function loginAdmin() {
+            if (document.getElementById('adminPass').value === 'admin123') {
+                document.getElementById('adminLogin').style.display = 'none';
+                document.getElementById('adminPanel').style.display = 'block';
+                updateAdminDashboard();
+            }
+        }
+
+        function updateAdminDashboard() {
+            document.getElementById('totalOrders').textContent = orders.length;
+            document.getElementById('totalRevenue').textContent =
+                '$' + orders.reduce((sum, order) => sum + order.total, 0).toFixed(2);
+            document.getElementById('pendingOrders').textContent =
+                orders.filter(o => o.status === 'pending').length;
+            
+            document.getElementById('ordersTable').innerHTML = orders.slice(0, 10).map(order => `
+                <tr>
+                    <td>#${order.id}</td>
+                    <td>${order.customer}</td>
+                    <td>$${order.total}</td>
+                    <td><span class="status-${order.status}">
+                        ${order.status === 'pending' ? 'Pending' : 'Shipped'}
+                    </span></td>
+                    <td>${order.date}</td>
+                    <td>
+                        <button onclick="shipOrder(${order.id})">Mark Shipped</button>
+                        <button onclick="deleteOrder(${order.id})">Delete</button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        function shipOrder(orderId) {
+            const order = orders.find(o => o.id === orderId);
+            if (!order) return;
+            order.status = 'shipped';
+            localStorage.setItem('orders', JSON.stringify(orders));
+            updateAdminDashboard();
+        }
+
+        function deleteOrder(orderId) {
+            orders = orders.filter(o => o.id !== orderId);
+            localStorage.setItem('orders', JSON.stringify(orders));
+            updateAdminDashboard();
+        }
+
+        function toggleAdmin() {
+            document.getElementById('adminLogin').style.display = 'block';
+        }
+
+        // TODO: implement addToCart(), updateCartUI(), startQuiz(), etc.
+
+        document.addEventListener('DOMContentLoaded', () => {
+            // updateCartUI();
+            calculateTotals();
+        });
+    </script>
+</body>
+</html>
